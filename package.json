@@ -1,0 +1,22 @@
+{
+  "name": "room-drawing-board",
+  "version": "1.0.0",
+  "description": "Multi-room collaborative whiteboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "uuid": "^9.0.1",
+    "cors": "^2.8.5"
+  },
+  "keywords": ["whiteboard", "collaboration", "real-time", "drawing"],
+  "author": "Your Name",
+  "license": "MIT"
+} 

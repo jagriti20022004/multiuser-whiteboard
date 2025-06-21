@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Room-Based Drawing Board</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎨 Collaborative Drawing Board</h1>
+            <p>Create or join rooms to draw together in real-time</p>
+        </header>
+
+        <main>
+            <!-- Standalone Whiteboard Section -->
+            <div class="form-section" id="standaloneSection">
+                <h2>🎨 Quick Start</h2>
+                <p>Want to draw without creating a room? Start drawing immediately!</p>
+                <a href="/whiteboard" class="btn btn-primary">Start Drawing (Standalone)</a>
+                <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+            </div>
+
+            <!-- Room Creation Form -->
+            <div class="form-section" id="createRoomSection">
+                <h2>Create a New Room</h2>
+                <form id="createRoomForm" class="room-form">
+                    <div class="form-group">
+                        <label for="roomName">Room Name:</label>
+                        <input type="text" id="roomName" name="roomName" required 
+                               placeholder="Enter room name (e.g., Team Meeting, Brainstorming)">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="creatorName">Your Name:</label>
+                        <input type="text" id="creatorName" name="creatorName" required 
+                               placeholder="Enter your name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="passcode">Passcode:</label>
+                        <input type="password" id="passcode" name="passcode" required 
+                               placeholder="Create a passcode for the room">
+                        <small>Share this passcode with others to let them join</small>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Create Room</button>
+                </form>
+            </div>
+
+            <!-- Room Joining Form -->
+            <div class="form-section" id="joinRoomSection">
+                <h2>Join an Existing Room</h2>
+                <form id="joinRoomForm" class="room-form">
+                    <div class="form-group">
+                        <label for="roomId">Room ID:</label>
+                        <input type="text" id="roomId" name="roomId" required 
+                               placeholder="Enter the room ID">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="participantName">Your Name:</label>
+                        <input type="text" id="participantName" name="participantName" required 
+                               placeholder="Enter your name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="joinPasscode">Passcode:</label>
+                        <input type="password" id="joinPasscode" name="joinPasscode" required 
+                               placeholder="Enter room passcode">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-secondary">Join Room</button>
+                </form>
+            </div>
+
+            <!-- Room Info Display -->
+            <div class="room-info" id="roomInfo" style="display: none;">
+                <h3>Room Information</h3>
+                <div class="room-details">
+                    <p><strong>Room Name:</strong> <span id="displayRoomName"></span></p>
+                    <p><strong>Room ID:</strong> <span id="displayRoomId"></span></p>
+                    <p><strong>Participants:</strong> <span id="displayParticipants"></span></p>
+                </div>
+                <button id="copyRoomId" class="btn btn-small">Copy Room ID</button>
+                <button id="leaveRoom" class="btn btn-small btn-danger">Leave Room</button>
+            </div>
+
+            <!-- Status Messages -->
+            <div id="statusMessage" class="status-message" style="display: none;"></div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
