@@ -1,10 +1,17 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, './.env') });
+
+// --- DEBUGGING ---
+console.log('--- Checking Environment Variables ---');
+console.log('Project ID from .env:', process.env.FIREBASE_PROJECT_ID);
+console.log('------------------------------------');
+// --- END DEBUGGING ---
+
 const { initializeApp, applicationDefault } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -16,6 +23,7 @@ let db;
 try {
   initializeApp({
     credential: applicationDefault(),
+    projectId: process.env.FIREBASE_PROJECT_ID,
   });
   db = getFirestore();
   console.log('Firebase connected successfully.');
@@ -222,6 +230,7 @@ wss.on('connection', (ws, req) => {
                 case 'drawing_data':
                 case 'clear_canvas':
                     if (currentRoomId) {
+                        console.log(`[WS RELAY] Relaying '${data.type}' to room ${currentRoomId}`);
                         // Broadcast drawing and clear events to other clients in the same room
                         broadcastToRoom(currentRoomId, { ...data, user: currentUser }, ws);
                     }
@@ -290,6 +299,7 @@ wss.on('connection', (ws, req) => {
 function broadcastToRoom(roomId, message, excludeWs = null) {
     const roomWsSet = roomConnections.get(roomId);
     if (roomWsSet) {
+        console.log(`[WS BROADCAST] Broadcasting to ${roomWsSet.size} client(s) in room ${roomId}`);
         const stringifiedMessage = JSON.stringify(message);
         roomWsSet.forEach(client => {
             if (client !== excludeWs && client.readyState === WebSocket.OPEN) {

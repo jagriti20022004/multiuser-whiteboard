@@ -120,6 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Handle WebSocket messages
     function handleWebSocketMessage(data) {
+        console.log('[WS RECEIVE]', data);
         switch (data.type) {
             case 'room_joined':
                 showStatus(`Joined room: ${data.room.name}`, 'success');
@@ -137,6 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
 
             case 'drawing_update':
+                console.log('[WS RECEIVE] Drawing update received from another user.');
                 // Received a new drawing from another user.
                 // The onSnapshot listener is the source of truth, but we can draw this
                 // immediately for lower latency, then the listener will sync the state.
@@ -647,49 +649,39 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.lineTo(endX - headlen * Math.cos(angle + Math.PI / 6), endY - headlen * Math.sin(angle + Math.PI / 6));
     }
 
+    function finalizePath(path) {
+        if (path.points.length < 2) return;
+        const event = { type: 'path', ...path, id: crypto.randomUUID() };
+        drawingHistory.push(event);
+        if (isRoomMode && ws && ws.readyState === WebSocket.OPEN) {
+            console.log('[WS SEND] Sending path data:', event);
+            ws.send(JSON.stringify({ type: 'drawing_data', drawingData: event }));
+        }
+    }
+
+    function finalizeShape(shape, startX, startY, endX, endY) {
+        const event = { type: 'shape', shape, startX, startY, endX, endY, color: currentColor, lineWidth: currentLineWidth, id: crypto.randomUUID() };
+        drawingHistory.push(event);
+        if (isRoomMode && ws && ws.readyState === WebSocket.OPEN) {
+            console.log('[WS SEND] Sending shape data:', event);
+            ws.send(JSON.stringify({ type: 'drawing_data', drawingData: event }));
+        }
+    }
+
     async function finalizeTextInput(x, y) {
-        if (!textInput || !textInput.innerText.trim()) return;
-
-        // Generate a unique ID for the text event.
-        const eventId = crypto.randomUUID();
-        
-        const textEvent = {
-            id: eventId, // Use the client-generated ID
-            tool: 'text',
-            text: textInput.innerText,
-            color: currentColor,
-            lineWidth: currentLineWidth,
-            x: x,
-            y: y,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-            userId: userId,
-            userName: currentUser,
-            deleted: false
-        };
-
-        // Add to local history and draw locally.
-        applyDrawingEvent(textEvent);
-        drawingHistory.push(textEvent);
-
-        // Send to Firestore.
-        if (userId) {
-            try {
-                const collectionPath = isRoomMode ? `rooms/${currentRoom}/drawings` : `artifacts/${appId}/public/data/drawings`;
-                // Use .doc(id).set() to enforce our client-generated ID.
-                await db.collection(collectionPath).doc(textEvent.id).set(textEvent);
-                updateUndoRedoButtons();
-            } catch (error) {
-                console.error("Error saving text to Firestore: ", error);
+        if (!textInput) return;
+        const text = textInput.value;
+        if (text && text.trim() !== '') {
+            const event = { type: 'text', text, x, y, color: currentColor, id: crypto.randomUUID() };
+            drawingHistory.push(event);
+            applyDrawingEvent(event); // Draw it immediately
+            if (isRoomMode && ws && ws.readyState === WebSocket.OPEN) {
+                console.log('[WS SEND] Sending text data:', event);
+                ws.send(JSON.stringify({ type: 'drawing_data', drawingData: event }));
             }
         }
-
-        // Send via WebSocket.
-        if (isRoomMode && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'drawing_data',
-                drawingData: textEvent
-            }));
-        }
+        document.body.removeChild(textInput);
+        textInput = null;
     }
 
     // --- Firestore Interaction ---
