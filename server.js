@@ -1,282 +1,229 @@
 require('dotenv').config();
 const { initializeApp, applicationDefault } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
-
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // --- Firebase Initialization ---
+let db;
 try {
   initializeApp({
     credential: applicationDefault(),
   });
-  const db = getFirestore();
+  db = getFirestore();
   console.log('Firebase connected successfully.');
 } catch (error) {
   console.error('Firebase initialization error:', error);
   process.exit(1);
 }
 
-// --- Room Data Persistence ---
-const ROOMS_FILE = path.join(__dirname, 'rooms.json');
-
-// Function to read rooms from the JSON file
-const readRoomsFromFile = () => {
-    try {
-        if (fs.existsSync(ROOMS_FILE)) {
-            const data = fs.readFileSync(ROOMS_FILE);
-            return new Map(Object.entries(JSON.parse(data)));
-        }
-    } catch (error) {
-        console.error('Error reading rooms file:', error);
-    }
-    return new Map();
-};
-
-// Function to write rooms to the JSON file
-const writeRoomsToFile = (rooms) => {
-    try {
-        fs.writeFileSync(ROOMS_FILE, JSON.stringify(Object.fromEntries(rooms), null, 4));
-    } catch (error) {
-        console.error('Error writing rooms file:', error);
-    }
-};
-
-let rooms = readRoomsFromFile();
+// In-memory map to track WebSocket connections for each room
 const roomConnections = new Map();
 
 // Middleware
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Routes
+// --- Routes ---
+
 app.get('/', (req, res) => {
-    console.log('Home page requested');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Direct whiteboard route - no room authentication required
-app.get('/whiteboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'whiteboard.html'));
-});
-
-// Static files middleware (before room routes to serve CSS/JS files)
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Test route to debug redirection
-app.get('/test-redirect', (req, res) => {
-    console.log('Test redirect route accessed');
-    res.json({ 
-        message: 'Test route working',
-        rooms: Array.from(rooms.keys()),
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Debug route to check rooms
-app.get('/debug/rooms', (req, res) => {
-    const roomList = Array.from(rooms.entries()).map(([id, room]) => ({
-        id,
-        name: room.name,
-        creator: room.creator,
-        participants: room.participants,
-        createdAt: room.createdAt
-    }));
-    
-    res.json({
-        totalRooms: rooms.size,
-        rooms: roomList,
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Whiteboard route - requires room authentication (after static files)
-app.get('/whiteboard/:roomId', (req, res) => {
+// Whiteboard route - requires room authentication
+app.get('/whiteboard/:roomId', async (req, res) => {
     const { roomId } = req.params;
     const { user } = req.query;
-    
-    console.log('Whiteboard route accessed:', { roomId, user });
-    
-    rooms = readRoomsFromFile(); // Always read the latest rooms state
-    const room = rooms.get(roomId);
 
-    console.log('Room lookup result:', room ? 'found' : 'not found');
-    if (room) {
-        console.log('Room participants:', room.participants);
-        console.log('User authorized:', room.participants.includes(user));
+    if (!user) {
+        return res.redirect(`/?error=user_required`);
     }
 
-    if (!room) {
-        console.log('Room not found, redirecting to home');
-        return res.redirect(`/?error=room_not_found&roomId=${roomId}`);
+    try {
+        const roomRef = db.collection('rooms').doc(roomId);
+        const doc = await roomRef.get();
+
+        if (!doc.exists) {
+            console.log('Room not found in Firestore, redirecting to home');
+            return res.redirect(`/?error=room_not_found&roomId=${roomId}`);
+        }
+
+        const room = doc.data();
+        if (!room.participants.includes(user)) {
+            console.log('User not authorized for room, redirecting to home');
+            return res.redirect(`/?error=unauthorized&roomId=${roomId}`);
+        }
+
+        console.log('Room authentication successful, serving whiteboard');
+        res.sendFile(path.join(__dirname, 'public', 'whiteboard.html'));
+    } catch (error) {
+        console.error('Error during whiteboard authentication:', error);
+        return res.status(500).redirect('/?error=server_error');
     }
-    
-    if (!room.participants.includes(user)) {
-        console.log('User not authorized, redirecting to home');
-        return res.redirect(`/?error=unauthorized&roomId=${roomId}`);
-    }
-    
-    console.log('Room authentication successful, serving whiteboard');
-    res.sendFile(path.join(__dirname, 'public', 'whiteboard.html'));
 });
 
-// API Routes
-app.post('/api/rooms', (req, res) => {
+// --- API Routes ---
+
+// Create a new room
+app.post('/api/rooms', async (req, res) => {
     const { roomName, passcode, creatorName } = req.body;
     
     if (!roomName || !passcode || !creatorName) {
         return res.status(400).json({ error: 'Room name, passcode, and creator name are required' });
     }
-    
+
     const roomId = uuidv4();
-    const room = {
+    const roomData = {
         id: roomId,
         name: roomName,
-        passcode: passcode,
+        passcode: passcode, // In a real app, this should be hashed
         creator: creatorName,
         participants: [creatorName],
         createdAt: new Date().toISOString()
     };
     
-    rooms.set(roomId, room);
-    writeRoomsToFile(rooms);
-    
-    res.json({ 
-        success: true, 
-        roomId: roomId,
-        message: 'Room created successfully' 
-    });
+    try {
+        await db.collection('rooms').doc(roomId).set(roomData);
+        console.log(`Room created in Firestore with ID: ${roomId}`);
+        res.status(201).json({ 
+            success: true, 
+            roomId: roomId,
+            message: 'Room created successfully' 
+        });
+    } catch (error) {
+        console.error("Error creating room in Firestore:", error);
+        res.status(500).json({ error: 'Failed to create room' });
+    }
 });
 
-app.post('/api/rooms/join', (req, res) => {
+// Join an existing room
+app.post('/api/rooms/join', async (req, res) => {
     const { roomId, passcode, participantName } = req.body;
     
     if (!roomId || !passcode || !participantName) {
         return res.status(400).json({ error: 'Room ID, passcode, and participant name are required' });
     }
     
-    rooms = readRoomsFromFile();
-    const room = rooms.get(roomId);
-    
-    if (!room) {
-        return res.status(404).json({ error: 'Room not found' });
-    }
-    
-    if (room.passcode !== passcode) {
-        return res.status(401).json({ error: 'Invalid passcode' });
-    }
-    
-    if (room.participants.includes(participantName)) {
-        return res.status(400).json({ error: 'Name already taken in this room' });
-    }
-    
-    room.participants.push(participantName);
-    rooms.set(roomId, room);
-    writeRoomsToFile(rooms);
-    
-    res.json({ 
-        success: true, 
-        room: { id: room.id, name: room.name, participants: room.participants },
-        message: 'Joined room successfully' 
-    });
-});
+    try {
+        const roomRef = db.collection('rooms').doc(roomId);
+        const doc = await roomRef.get();
 
-app.get('/api/rooms/:roomId', (req, res) => {
-    rooms = readRoomsFromFile();
-    const room = rooms.get(req.params.roomId);
-    
-    if (!room) {
-        return res.status(404).json({ error: 'Room not found' });
-    }
-    
-    res.json(room);
-});
-
-// WebSocket connection handling
-wss.on('connection', (ws, req) => {
-    let currentRoom = null;
-    let currentUser = null;
-    let heartbeatInterval = null;
-    
-    // Set up heartbeat
-    heartbeatInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.ping();
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Room not found' });
         }
-    }, 30000); // Send ping every 30 seconds
+        
+        const room = doc.data();
+
+        if (room.passcode !== passcode) {
+            return res.status(401).json({ error: 'Invalid passcode' });
+        }
     
-    ws.on('pong', () => {
-        // Client responded to ping, connection is alive
-    });
+        if (room.participants.includes(participantName)) {
+            // Allow rejoining, but don't add duplicate name
+            console.log(`Participant ${participantName} is rejoining room ${roomId}`);
+        } else {
+            // Add new participant
+            await roomRef.update({
+                participants: FieldValue.arrayUnion(participantName)
+            });
+            console.log(`Participant ${participantName} added to room ${roomId} in Firestore`);
+        }
+        
+        // Fetch the updated room data to return
+        const updatedDoc = await roomRef.get();
+        const updatedRoom = updatedDoc.data();
+
+        res.json({ 
+            success: true, 
+            room: { id: updatedRoom.id, name: updatedRoom.name, participants: updatedRoom.participants },
+            message: 'Joined room successfully' 
+        });
+    } catch (error) {
+        console.error(`Error joining room ${roomId}:`, error);
+        res.status(500).json({ error: 'Failed to join room' });
+    }
+});
+
+// Get room details
+app.get('/api/rooms/:roomId', async (req, res) => {
+    try {
+        const roomRef = db.collection('rooms').doc(req.params.roomId);
+        const doc = await roomRef.get();
+        
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+        
+        res.json(doc.data());
+    } catch (error) {
+        console.error(`Error fetching room ${req.params.roomId}:`, error);
+        res.status(500).json({ error: 'Failed to fetch room data' });
+    }
+});
+
+
+// --- WebSocket Connection Handling ---
+wss.on('connection', (ws, req) => {
+    let currentRoomId = null;
+    let currentUser = null;
     
-    ws.on('message', (message) => {
+    const heartbeat = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, 30000);
+    
+    ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            console.log('WebSocket message received:', data);
             
             switch (data.type) {
                 case 'join_room':
-                    const room = rooms.get(data.roomId);
-                    if (room && room.participants.includes(data.userName)) {
-                        currentRoom = data.roomId;
+                    const roomRef = db.collection('rooms').doc(data.roomId);
+                    const doc = await roomRef.get();
+
+                    if (doc.exists && doc.data().participants.includes(data.userName)) {
+                        currentRoomId = data.roomId;
                         currentUser = data.userName;
                         
-                        // Add this connection to the room
-                        if (!roomConnections.has(currentRoom)) {
-                            roomConnections.set(currentRoom, new Set());
+                        // Add this connection to the in-memory map
+                        if (!roomConnections.has(currentRoomId)) {
+                            roomConnections.set(currentRoomId, new Set());
                         }
-                        roomConnections.get(currentRoom).add(ws);
+                        roomConnections.get(currentRoomId).add(ws);
                         
-                        console.log(`User ${currentUser} joined room ${currentRoom}`);
+                        console.log(`User ${currentUser} connected to WebSocket for room ${currentRoomId}`);
                         
-                        // Send confirmation to the new user (without drawing data)
+                        const room = doc.data();
+                        
+                        // Send confirmation to the joining user
                         ws.send(JSON.stringify({
                             type: 'room_joined',
-                            room: {
-                                id: room.id,
-                                name: room.name,
-                                participants: room.participants
-                            }
+                            room: { id: room.id, name: room.name, participants: room.participants }
                         }));
                         
                         // Notify other users in the room
-                        broadcastToRoom(currentRoom, {
+                        broadcastToRoom(currentRoomId, {
                             type: 'user_joined',
-                            userName: data.userName,
+                            userName: currentUser,
                             participants: room.participants
                         }, ws);
                     } else {
-                        console.log('Invalid room join attempt:', data);
+                        console.log('Invalid WebSocket join attempt:', data);
+                        ws.close();
                     }
                     break;
                     
                 case 'drawing_data':
-                    if (currentRoom) {
-                        // The server's only job is to broadcast the drawing data.
-                        // Persistence is handled by the clients via Firestore.
-                        broadcastToRoom(currentRoom, {
-                            type: 'drawing_update',
-                            drawingData: data.drawingData,
-                            user: currentUser
-                        }, ws);
-                    }
-                    break;
-                    
                 case 'clear_canvas':
-                    if (currentRoom) {
-                        // The server's only job is to broadcast the clear canvas command.
-                        // Persistence is handled by the clients via Firestore.
-                        broadcastToRoom(currentRoom, {
-                            type: 'clear_canvas',
-                            user: currentUser
-                        }, ws);
+                    if (currentRoomId) {
+                        // Broadcast drawing and clear events to other clients in the same room
+                        broadcastToRoom(currentRoomId, { ...data, user: currentUser }, ws);
                     }
                     break;
             }
@@ -285,77 +232,68 @@ wss.on('connection', (ws, req) => {
         }
     });
     
-    ws.on('close', () => {
-        // Clear heartbeat interval
-        if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-        }
+    ws.on('close', async () => {
+        clearInterval(heartbeat);
         
-        if (currentRoom && currentUser) {
-            console.log(`WebSocket closed for user ${currentUser} in room ${currentRoom}`);
+        if (currentRoomId && currentUser) {
+            console.log(`WebSocket closed for user ${currentUser} in room ${currentRoomId}`);
             
-            // Remove from room connections
-            const roomWsSet = roomConnections.get(currentRoom);
+            // Remove the connection from the in-memory map
+            const roomWsSet = roomConnections.get(currentRoomId);
             if (roomWsSet) {
                 roomWsSet.delete(ws);
                 if (roomWsSet.size === 0) {
-                    roomConnections.delete(currentRoom);
+                    roomConnections.delete(currentRoomId);
                 }
             }
             
-            // Read fresh room data from file
-            rooms = readRoomsFromFile();
-            const room = rooms.get(currentRoom);
-            
-            if (room) {
-                // Remove user from participants
-                room.participants = room.participants.filter(p => p !== currentUser);
-                rooms.set(currentRoom, room);
-                
-                // Save updated room data
-                writeRoomsToFile(rooms);
-                
-                // Remove room if no participants left, but with a delay to prevent race conditions
-                if (room.participants.length === 0) {
-                    console.log('Room is empty, scheduling removal:', currentRoom);
-                    setTimeout(() => {
-                        // Re-check if room is still empty before removing
-                        rooms = readRoomsFromFile();
-                        const currentRoomData = rooms.get(currentRoom);
-                        if (currentRoomData && currentRoomData.participants.length === 0) {
-                            console.log('Removing empty room after delay:', currentRoom);
-                            rooms.delete(currentRoom);
-                            roomConnections.delete(currentRoom);
-                            writeRoomsToFile(rooms);
-                        }
-                    }, 5000); // 5 second delay
-                } else {
-                    // Notify remaining users
-                    broadcastToRoom(currentRoom, {
-                        type: 'user_left',
-                        userName: currentUser,
-                        participants: room.participants
-                    });
+            try {
+                const roomRef = db.collection('rooms').doc(currentRoomId);
+                const doc = await roomRef.get();
+
+                if (doc.exists) {
+                    const room = doc.data();
+                    const remainingParticipants = room.participants.filter(p => p !== currentUser);
+
+                    // If user was the last one, schedule room deletion
+                    if (remainingParticipants.length === 0) {
+                        console.log(`Room ${currentRoomId} is empty. Scheduling deletion.`);
+                        setTimeout(async () => {
+                            // Re-check before deleting in case someone rejoins
+                            const latestDoc = await roomRef.get();
+                            if (latestDoc.exists && latestDoc.data().participants.length === 0) {
+                                await roomRef.delete();
+                                console.log(`Deleted empty room ${currentRoomId} from Firestore.`);
+                            }
+                        }, 60000); // 1-minute delay
+                    } else {
+                         // Otherwise, just update the participant list
+                        await roomRef.update({ participants: remainingParticipants });
+
+                        // Notify remaining users
+                        broadcastToRoom(currentRoomId, {
+                            type: 'user_left',
+                            userName: currentUser,
+                            participants: remainingParticipants
+                        });
+                    }
                 }
+            } catch (error) {
+                console.error(`Error handling user exit for room ${currentRoomId}:`, error);
             }
         }
     });
-    
-    ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-        // Clear heartbeat interval on error
-        if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-        }
-    });
+
+    ws.on('error', (error) => console.error('WebSocket error:', error));
 });
 
 function broadcastToRoom(roomId, message, excludeWs = null) {
     const roomWsSet = roomConnections.get(roomId);
     if (roomWsSet) {
+        const stringifiedMessage = JSON.stringify(message);
         roomWsSet.forEach(client => {
             if (client !== excludeWs && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(message));
+                client.send(stringifiedMessage);
             }
         });
     }
@@ -364,5 +302,4 @@ function broadcastToRoom(roomId, message, excludeWs = null) {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`WebSocket server running on ws://localhost:${PORT}`);
-}); 
+});
