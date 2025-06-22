@@ -64,30 +64,6 @@ A real-time collaborative drawing application with room-based functionality, bui
 
 5. **Deploy**
 
-### Option 2: Railway
-
-1. **Create a Railway account** at [railway.app](https://railway.app)
-
-2. **Connect your GitHub repository**
-
-3. **Deploy automatically** - Railway will detect your Node.js app
-
-### Option 3: Heroku
-
-1. **Install Heroku CLI**
-
-2. **Create Heroku app**
-   ```bash
-   heroku create your-whiteboard-app
-   ```
-
-3. **Deploy**
-   ```bash
-   git add .
-   git commit -m "Deploy to Heroku"
-   git push heroku main
-   ```
-
 ## Environment Variables
 
 The application uses Firebase configuration. Make sure to update the Firebase config in `public/whiteboard.js` with your own project details:
@@ -145,3 +121,7 @@ test-setup/
 ## License
 
 MIT License - see LICENSE file for details 
+
+
+Render deployed LINK is attached below :
+https://multiuser-whiteboard-2.onrender.com
