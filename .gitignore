@@ -62,4 +62,10 @@ Thumbs.db
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
+
+# Private credentials
+private_key.json
+*.json
+google-credentials.json
+serviceAccountKey.json 

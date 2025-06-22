@@ -1,3 +1,7 @@
+require('dotenv').config();
+const { initializeApp, applicationDefault } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -8,6 +12,18 @@ const fs = require('fs');
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+
+// --- Firebase Initialization ---
+try {
+  initializeApp({
+    credential: applicationDefault(),
+  });
+  const db = getFirestore();
+  console.log('Firebase connected successfully.');
+} catch (error) {
+  console.error('Firebase initialization error:', error);
+  process.exit(1);
+}
 
 // --- Room Data Persistence ---
 const ROOMS_FILE = path.join(__dirname, 'rooms.json');
